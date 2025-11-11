@@ -68,12 +68,17 @@ void fsm_electronic_lock_run() {
 		case LOCK_OUT:
 			lockout();
 			break;
-		case UPDATE_PASSWORD_NUMBER:
-			update_password_number();
+//		case UPDATE_PASSWORD_NUMBER:
+//			update_password_number();
+//			break;
+//		case UPDATE_PASSWORD_CHARACTER:
+//			update_password_character();
+//			break;
+		case CHANGE_PASSWORD_NUMBER:
+			change_password_number();
 			break;
-		case UPDATE_PASSWORD_CHARACTER:
-			keyboard_state = KEYBOARD_NUMBER;
-			electronic_lock_state = UPDATE_PASSWORD_NUMBER;
+		case CHANGE_PASSWORD_CHARACTER:
+			change_password_character();
 			break;
 		default:
 			break;
@@ -113,6 +118,7 @@ uint8_t check_password() {
 void init_idle() {
 	lcd_fill(0, 0, 240, 20, WHITE);
 	lcd_fill(0, 150, 240, 170, WHITE);
+	lcd_fill(0, 20, 240, 172, WHITE);
 	lcd_show_string_center(0, 0, "IDLE", BLACK, WHITE, 16, 0);
 	lcd_show_picture(84, 30, 72, 120, gImage_door_close);
 	lcd_show_picture(0, 172, 240, 148, gImage_ini_key_num);
@@ -189,16 +195,16 @@ void init_update_password_number();
 void init_update_password_character();
 
 void init_update_password(){
-	if(electronic_lock_state == LOCK_OUT) return;
-	update_stage = 0;
-	reset_inputs();
-	lcd_fill(0, 0, 240, 20, WHITE);
-	lcd_fill(0, 150, 240, 170, WHITE);
-	lcd_show_string_center(0, 0, "CHANGE PASSWORD", BLACK, WHITE, 16, 0);
-	lcd_show_string_center(0, 150, "ENTER OLD PASSWORD", BLACK, WHITE, 16, 0);
-	keyboard_state = KEYBOARD_NUMBER;
-	electronic_lock_state = UPDATE_PASSWORD_NUMBER;
-	setTimer(SYSTEM_TIMER, 100);
+//	if(electronic_lock_state == LOCK_OUT) return;
+//	update_stage = 0;
+//	reset_inputs();
+//	lcd_fill(0, 0, 240, 20, WHITE);
+//	lcd_fill(0, 150, 240, 170, WHITE);
+//	lcd_show_string_center(0, 0, "CHANGE PASSWORD", BLACK, WHITE, 16, 0);
+//	lcd_show_string_center(0, 150, "ENTER OLD PASSWORD", BLACK, WHITE, 16, 0);
+//	keyboard_state = KEYBOARD_NUMBER;
+//	electronic_lock_state = UPDATE_PASSWORD_NUMBER;
+//	setTimer(SYSTEM_TIMER, 100);
 }
 
 void idle_receive_password_number() {
@@ -228,7 +234,9 @@ void idle() {
 	read_edges(e);
 
 	if(e[14]){
-		init_update_password();
+		super_init_change_password_number();
+		electronic_lock_state = CHANGE_PASSWORD_NUMBER;
+		setTimer(SYSTEM_TIMER, 100);
 		return;
 	}
 
@@ -442,6 +450,14 @@ static uint8_t wrong_counter = 0;
 uint8_t lock_level = 0;
 uint32_t lockout_remaining_ms = 0;
 
+// Variables for change password flow
+static uint8_t change_stage = 0; // 0: old password, 1: new password, 2: confirm password
+static uint8_t old_password_input[4] = {0};
+static uint8_t new_password_input[4] = {0};
+static uint8_t confirm_password_input[4] = {0};
+static uint8_t change_password_index = 0;
+static uint8_t change_password_wrong_count = 0; // Count wrong old password attempts
+
 void show_7SEGMENT(uint16_t seconds){
 	int d0 = seconds%10;
 	seconds /= 10;
@@ -465,7 +481,7 @@ void process_and_control() {
 	if (check_password()) {
 		// Password correct
 		lcd_fill(0, 150, 240, 20, WHITE);
-		lcd_show_string_center(0, 150, "PASSWORD CORRECT", BLACK, WHITE, 16, 0);
+		lcd_show_string_center(0, 150, "PASSWORD CORRECT", GREEN, WHITE, 16, 0);
 		wrong_counter = 0;
 		lock_level = 0;
 		setTimer(SYSTEM_TIMER, 1500);
@@ -483,8 +499,36 @@ void process_and_control() {
 }
 
 void password_incorrect() {
-	// Wait 1.5s then return to IDLE
+	// Wait 1.5s then return to IDLE or reset change password form
 	if (!isTimerExpired(SYSTEM_TIMER)) return;
+	
+	// Check if coming from change password with too many wrong attempts
+	if (change_password_wrong_count >= 3) {
+		// Go to IDLE first, then trigger lockout
+		reset_inputs();
+		init_idle();
+		electronic_lock_state = IDLE;
+		
+		// Prepare lockout parameters
+		uint32_t duration_ms = 60000;
+		duration_ms <<= lock_level;
+		init_lockout(duration_ms);
+		electronic_lock_state = LOCK_OUT;
+		lock_level++;
+		change_password_wrong_count = 0; // Reset for next time
+		return;
+	}
+	
+	// Check if this was from change password (wrong_counter not incremented)
+	if (change_password_wrong_count > 0 && change_password_wrong_count < 3) {
+		// Reset change password form and stay in change password state
+		reset_change_password_form();
+		electronic_lock_state = CHANGE_PASSWORD_NUMBER;
+		setTimer(SYSTEM_TIMER, 100);
+		return;
+	}
+	
+	// Normal password incorrect flow
 	if(wrong_counter >= 3){
 		uint32_t duration_ms = 60000;
 		duration_ms <<= lock_level;
@@ -493,6 +537,7 @@ void password_incorrect() {
 		lock_level++;
 		return;
 	}
+	
 	reset_inputs();
 	init_idle();
 	electronic_lock_state = IDLE;
@@ -640,9 +685,86 @@ static int get_digit_from_edges(uint8_t e[16]){
 }
 
 void update_password_number(){
-	if(!isTimerExpired(SYSTEM_TIMER)) return;
+
+}
+
+void update_password_character() {
+
+}
+
+// Called when first entering change password from IDLE - resets everything including counter
+void super_init_change_password_number() {
+	lcd_fill(0, 0, 240, 20, WHITE);
+	lcd_show_string_center(0, 0, "CHANGE PASSWORD", BLACK, WHITE, 16, 0);
+	lcd_fill(0, 20, 240, 172, WHITE);
+	
+	lcd_show_string(20, 50, "OLD PASSWORD:", BLACK, WHITE, 16, 0);
+	lcd_show_string(20, 80, "NEW PASSWORD:", BLACK, WHITE, 16, 0);
+	lcd_show_string(20, 110, "CONFIRM:", BLACK, WHITE, 16, 0);
+	
+	lcd_show_picture(0, 172, 240, 148, gImage_ini_key_num);
+	
+	// Reset variables
+	change_stage = 0;
+	change_password_index = 0;
+	change_password_wrong_count = 0; // Reset wrong count when first entering change password
+	for (int i = 0; i < 4; i++) {
+		old_password_input[i] = 0;
+		new_password_input[i] = 0;
+		confirm_password_input[i] = 0;
+	}
+	
+	keyboard_state = KEYBOARD_NUMBER;
+}
+
+// Called when resetting form after wrong password - does NOT reset counter
+void reset_change_password_form() {
+	lcd_fill(0, 0, 240, 20, WHITE);
+	lcd_show_string_center(0, 0, "CHANGE PASSWORD", BLACK, WHITE, 16, 0);
+	lcd_fill(0, 20, 240, 172, WHITE);
+	
+	lcd_show_string(20, 50, "OLD PASSWORD:", BLACK, WHITE, 16, 0);
+	lcd_show_string(20, 80, "NEW PASSWORD:", BLACK, WHITE, 16, 0);
+	lcd_show_string(20, 110, "CONFIRM:", BLACK, WHITE, 16, 0);
+	
+	lcd_show_picture(0, 172, 240, 148, gImage_ini_key_num);
+	
+	// Reset variables but keep change_password_wrong_count
+	change_stage = 0;
+	change_password_index = 0;
+	for (int i = 0; i < 4; i++) {
+		old_password_input[i] = 0;
+		new_password_input[i] = 0;
+		confirm_password_input[i] = 0;
+	}
+	
+	keyboard_state = KEYBOARD_NUMBER;
+}
+
+void init_change_password_number() {
+	lcd_fill(0, 0, 240, 20, WHITE);
+	lcd_show_string_center(0, 0, "CHANGE PASSWORD", BLACK, WHITE, 16, 0);
+	lcd_show_picture(0, 172, 240, 148, gImage_ini_key_num);
+
+
+	keyboard_state = KEYBOARD_NUMBER;
+}
+
+void init_change_password_character() {
+	lcd_fill(0, 0, 240, 20, WHITE);
+	lcd_show_string_center(0, 0, "CHANGE PASSWORD", BLACK, WHITE, 16, 0);
+	lcd_show_picture(0, 172, 240, 148, gImage_ini_key_char);
+	
+	keyboard_state = KEYBOARD_CHARACTER;
+}
+
+void change_password_number() {
+	if (!isTimerExpired(SYSTEM_TIMER)) return;
+	
 	uint8_t e[16];
 	read_edges(e);
+	
+	// Return to IDLE if button[14] pressed
 	if (e[14]) {
 		reset_inputs();
 		init_idle();
@@ -650,67 +772,285 @@ void update_password_number(){
 		setTimer(SYSTEM_TIMER, 100);
 		return;
 	}
-	if(e[3]){
-		if(entered_index > 0){
-			entered_index--;
-			entered_password[entered_index] = 0;
-			led_7seg_clear_pos(entered_index);
+	
+	// Toggle to character mode
+	if (e[12]) {
+		init_change_password_character();
+		electronic_lock_state = CHANGE_PASSWORD_CHARACTER;
+		setTimer(SYSTEM_TIMER, 100);
+		return;
+	}
+	
+	// DELETE one character
+	if (e[3]) {
+		if (change_password_index > 0) {
+			change_password_index--;
+			// Clear the last character by drawing white rectangle
+			uint16_t y_pos = (change_stage == 0) ? 50 : (change_stage == 1) ? 80 : 110;
+			lcd_fill(140 + change_password_index * 20, y_pos, 140 + change_password_index * 20 + 16, y_pos + 16, WHITE);
+			
+			// Clear from array
+			if (change_stage == 0) {
+				old_password_input[change_password_index] = 0;
+			} else if (change_stage == 1) {
+				new_password_input[change_password_index] = 0;
+			} else if (change_stage == 2) {
+				confirm_password_input[change_password_index] = 0;
+			}
 		}
 		setTimer(SYSTEM_TIMER, 100);
 		return;
 	}
-	if(e[7]){
-		reset_inputs();
+	
+	// DELETE ALL characters
+	if (e[7]) {
+		// Clear all characters in current stage
+		uint16_t y_pos = (change_stage == 0) ? 50 : (change_stage == 1) ? 80 : 110;
+		lcd_fill(140, y_pos, 240, y_pos + 20, WHITE);
+		
+		// Clear from array and reset index
+		change_password_index = 0;
+		if (change_stage == 0) {
+			for (int i = 0; i < 4; i++) old_password_input[i] = 0;
+		} else if (change_stage == 1) {
+			for (int i = 0; i < 4; i++) new_password_input[i] = 0;
+		} else if (change_stage == 2) {
+			for (int i = 0; i < 4; i++) confirm_password_input[i] = 0;
+		}
 		setTimer(SYSTEM_TIMER, 100);
 		return;
 	}
-	int d = get_digit_from_edges(e);
-	if(d >= 0 && entered_index < 4){
-		entered_password[entered_index] = (uint8_t)d;
-		led_7seg_set_digit(d, entered_index, 0);
-		entered_index++;
-		setTimer(TIMER_15S, TIMER_15S);
-	}
-	if(entered_index >= 4){
-		if(update_stage == 0){
-			if(check_password()){
-				reset_inputs();
-				update_stage = 1;
-				lcd_fill(0, 0, 240, 20, WHITE);
-				lcd_fill(0, 150, 240, 170, WHITE);
-				lcd_show_string_center(0, 0,  "ENTER NEW PASSWORD", RED, WHITE, 16, 0);
-				lcd_show_string_center(0, 150, "4 DIGITS", BLACK, WHITE, 16, 0);
-			}else{
-				lcd_fill(0, 0, 240, 20, WHITE);
-				lcd_fill(0, 150, 240, 170, WHITE);
-				lcd_show_string_center(0, 0,  "OLD PASSWORD WRONG", RED, WHITE, 16, 0);
-				lcd_show_string_center(0, 150, "ENTER OLD PASSWORD AGAIN", BLACK, WHITE, 16, 0);
+	
+	// Get digit input
+	int digit = get_digit_from_edges(e);
+	
+	if (digit >= 0 && change_password_index < 4) {
+		if (change_stage == 0) {
+			old_password_input[change_password_index] = (uint8_t)digit;
+			lcd_show_int_num(140 + change_password_index * 20, 50, digit, 1, BLACK, WHITE, 16);
+		} else if (change_stage == 1) {
+			new_password_input[change_password_index] = (uint8_t)digit;
+			lcd_show_int_num(140 + change_password_index * 20, 80, digit, 1, BLACK, WHITE, 16);
+		} else if (change_stage == 2) {
+			confirm_password_input[change_password_index] = (uint8_t)digit;
+			lcd_show_int_num(140 + change_password_index * 20, 110, digit, 1, BLACK, WHITE, 16);
+		}
+		
+		change_password_index++;
+		
+		if (change_password_index >= 4) {
+			change_password_index = 0;
+			change_stage++;
+			
+			if (change_stage >= 3) {
+				// Verify old password
+				uint8_t old_correct = 1;
+				for (int i = 0; i < 4; i++) {
+					if (old_password_input[i] != correct_password[i]) {
+						old_correct = 0;
+						break;
+					}
+				}
+				
+				// Verify new password matches confirm
+				uint8_t new_matches = 1;
+				for (int i = 0; i < 4; i++) {
+					if (new_password_input[i] != confirm_password_input[i]) {
+						new_matches = 0;
+						break;
+					}
+				}
+				
+				if (old_correct && new_matches) {
+					// Save new password - SUCCESS
+					for (int i = 0; i < 4; i++) {
+						correct_password[i] = new_password_input[i];
+					}
+					lcd_fill(0, 140, 240, 20, WHITE);
+					lcd_show_string_center(0, 140, "PASSWORD CHANGED!", GREEN, WHITE, 16, 0);
+					change_password_wrong_count = 0; // Reset counter on success
+					setTimer(SYSTEM_TIMER, 2000);
+					electronic_lock_state = LOCK_DOOR;
+				} else {
+					lcd_fill(0, 140, 240, 20, WHITE);
+					if (!old_correct) {
+						change_password_wrong_count++; // Increase wrong counter
+						
+						// Check if exceeded 3 attempts
+						if (change_password_wrong_count >= 3) {
+							lcd_show_string_center(0, 140, "TOO MANY ATTEMPTS!", RED, WHITE, 16, 0);
+							setTimer(SYSTEM_TIMER, 1500);
+							electronic_lock_state = PASSWORD_INCORRECT; // Trigger lockout
+							return;
+						} else {
+							lcd_show_string_center(0, 140, "OLD PASSWORD WRONG!", RED, WHITE, 16, 0);
+						}
+					} else {
+						lcd_show_string_center(0, 140, "PASSWORDS DON'T MATCH!", RED, WHITE, 16, 0);
+					}
+					
+					// Reset change password form and try again
+					setTimer(SYSTEM_TIMER, 1500);
+					electronic_lock_state = PASSWORD_INCORRECT; // Reset change password
+				}
+				
+				return;
 			}
-		} else{
-			for(int i=0; i<4; i++){
-				correct_password[i] = entered_password[i];
-			}
-			wrong_counter = 0;
-			lcd_fill(0, 0, 240, 20, WHITE);
-			lcd_fill(0, 150, 240, 170, WHITE);
-			lcd_show_string_center(0, 0,  "PASSWORD UPDATED", RED, WHITE, 16, 0);
-			lcd_show_string_center(0, 150, "SUCESS", BLACK, WHITE, 16, 0);
-			setTimer(SYSTEM_TIMER, 1500);
-			electronic_lock_state = IDLE;
-			reset_inputs();
-			init_idle();
-			return;
 		}
 	}
-	 if (isTimerExpired(TIMER_15S)) {
-		reset_inputs();
-		init_idle();
-		electronic_lock_state = IDLE;
-		return;
-	}
-
+	
 	setTimer(SYSTEM_TIMER, 100);
 }
 
-void update_password_character();
+void change_password_character() {
+	if (!isTimerExpired(SYSTEM_TIMER)) return;
+	
+	uint8_t e[16];
+	read_edges(e);
+	
+	if (e[14]) {
+		reset_inputs();
+		init_idle();
+		electronic_lock_state = IDLE;
+		setTimer(SYSTEM_TIMER, 100);
+		return;
+	}
+	
+	// Toggle back to number mode
+	if (e[12]) {
+		init_change_password_number();
+		electronic_lock_state = CHANGE_PASSWORD_NUMBER;
+		setTimer(SYSTEM_TIMER, 100);
+		return;
+	}
+	
+	// DELETE one character
+	if (e[3]) {
+		if (change_password_index > 0) {
+			change_password_index--;
+			// Clear the last character
+			uint16_t y_pos = (change_stage == 0) ? 50 : (change_stage == 1) ? 80 : 110;
+			lcd_fill(140 + change_password_index * 20, y_pos, 140 + change_password_index * 20 + 16, y_pos + 16, WHITE);
+			
+			// Clear from array
+			if (change_stage == 0) {
+				old_password_input[change_password_index] = 0;
+			} else if (change_stage == 1) {
+				new_password_input[change_password_index] = 0;
+			} else if (change_stage == 2) {
+				confirm_password_input[change_password_index] = 0;
+			}
+		}
+		setTimer(SYSTEM_TIMER, 100);
+		return;
+	}
+	
+	// DELETE ALL characters
+	if (e[7]) {
+		// Clear all characters in current stage
+		uint16_t y_pos = (change_stage == 0) ? 50 : (change_stage == 1) ? 80 : 110;
+		lcd_fill(140, y_pos, 240, y_pos + 20, WHITE);
+
+		// Clear from array and reset index
+		change_password_index = 0;
+		if (change_stage == 0) {
+			for (int i = 0; i < 4; i++) old_password_input[i] = 0;
+		} else if (change_stage == 1) {
+			for (int i = 0; i < 4; i++) new_password_input[i] = 0;
+		} else if (change_stage == 2) {
+			for (int i = 0; i < 4; i++) confirm_password_input[i] = 0;
+		}
+		setTimer(SYSTEM_TIMER, 100);
+		return;
+	}
+	
+	// Get character input (A-F)
+	int character = -1;
+	if (e[0]) character = 10; // A
+	else if (e[1]) character = 11; // B
+	else if (e[2]) character = 12; // C
+	else if (e[4]) character = 13; // D
+	else if (e[5]) character = 14; // E
+	else if (e[6]) character = 15; // F
+	
+	if (character >= 0 && change_password_index < 4) {
+		char display_char = 'A' + (character - 10);
+		
+		if (change_stage == 0) {
+			old_password_input[change_password_index] = (uint8_t)character;
+			lcd_show_char(140 + change_password_index * 20, 50, display_char, BLACK, WHITE, 16, 0);
+		} else if (change_stage == 1) {
+			new_password_input[change_password_index] = (uint8_t)character;
+			lcd_show_char(140 + change_password_index * 20, 80, display_char, BLACK, WHITE, 16, 0);
+		} else if (change_stage == 2) {
+			confirm_password_input[change_password_index] = (uint8_t)character;
+			lcd_show_char(140 + change_password_index * 20, 110, display_char, BLACK, WHITE, 16, 0);
+		}
+		
+		change_password_index++;
+		
+		if (change_password_index >= 4) {
+			change_password_index = 0;
+			change_stage++;
+			
+			if (change_stage >= 3) {
+				// Verify old password
+				uint8_t old_correct = 1;
+				for (int i = 0; i < 4; i++) {
+					if (old_password_input[i] != correct_password[i]) {
+						old_correct = 0;
+						break;
+					}
+				}
+				
+				// Verify new password matches confirm
+				uint8_t new_matches = 1;
+				for (int i = 0; i < 4; i++) {
+					if (new_password_input[i] != confirm_password_input[i]) {
+						new_matches = 0;
+						break;
+					}
+				}
+				
+				if (old_correct && new_matches) {
+					// Save new password - SUCCESS
+					for (int i = 0; i < 4; i++) {
+						correct_password[i] = new_password_input[i];
+					}
+					lcd_fill(0, 140, 240, 20, WHITE);
+					lcd_show_string_center(0, 140, "PASSWORD CHANGED!", GREEN, WHITE, 16, 0);
+					change_password_wrong_count = 0; // Reset counter on success
+					setTimer(SYSTEM_TIMER, 2000);
+					electronic_lock_state = LOCK_DOOR;
+				} else {
+					// FAILED - handle differently based on error type
+					lcd_fill(0, 140, 240, 20, WHITE);
+					if (!old_correct) {
+						change_password_wrong_count++; // Increment wrong counter
+						
+						// Check if exceeded 3 attempts
+						if (change_password_wrong_count >= 3) {
+							lcd_show_string_center(0, 140, "TOO MANY ATTEMPTS!", RED, WHITE, 16, 0);
+							setTimer(SYSTEM_TIMER, 1500);
+							electronic_lock_state = PASSWORD_INCORRECT; // Trigger lockout
+							return;
+						} else {
+							lcd_show_string_center(0, 140, "OLD PASSWORD WRONG!", RED, WHITE, 16, 0);
+						}
+					} else {
+						lcd_show_string_center(0, 140, "PASSWORDS DON'T MATCH!", RED, WHITE, 16, 0);
+					}
+					
+					// Reset change password form and try again
+					setTimer(SYSTEM_TIMER, 1500);
+					electronic_lock_state = PASSWORD_INCORRECT;
+				}
+				
+				return;
+			}
+		}
+	}
+	
+	setTimer(SYSTEM_TIMER, 100);
+}
 
