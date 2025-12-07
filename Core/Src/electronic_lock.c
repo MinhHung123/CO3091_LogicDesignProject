@@ -7,6 +7,7 @@
 
 #include "electronic_lock.h"
 #include "led_7seg.h"
+#include "buzzer.h"
 
 uint8_t electronic_lock_state = INIT;
 uint8_t keyboard_state = KEYBOARD_NUMBER;
@@ -116,10 +117,10 @@ uint8_t check_password() {
 }
 
 void init_idle() {
-	lcd_fill(0, 0, 240, 20, WHITE);
-	lcd_fill(0, 150, 240, 170, WHITE);
-	lcd_fill(0, 20, 240, 172, WHITE);
-	lcd_show_string_center(0, 0, "IDLE", BLACK, WHITE, 16, 0);
+	lcd_fill(0, 0, 240, 20, BLACK);
+	lcd_fill(0, 150, 240, 170, BLACK);
+	lcd_fill(0, 20, 240, 172, BLACK);
+	lcd_show_string_center(0, 0, "IDLE", LIGHTBLUE, BLACK, 16, 0);
 	lcd_show_picture(84, 30, 72, 120, gImage_door_close);
 	lcd_show_picture(0, 172, 240, 148, gImage_ini_key_num);
 	lcd_show_picture(195, 75, 30, 30, gImage_locked);
@@ -181,6 +182,8 @@ void init_alert() {
 	lcd_show_picture(30, 75, 30, 29, gImage_alert);
 	lcd_show_picture(195, 75, 30, 30, gImage_unlocked);
 	lcd_show_picture(84, 30, 93, 123, gImage_door_open);
+	setTimer(4, 500);
+	buzzer_init();
 }
 
 void init_lock_door() {
@@ -352,7 +355,7 @@ void receive_password_number() {
 		processed = 1;
 	}
 
-	if (!processed && e[3]) { // DELETE
+	if (e[3] && !processed) { // DELETE
 		if (entered_index > 0) {
 			entered_index--;
 			entered_password[entered_index] = 0;
@@ -419,7 +422,7 @@ void receive_password_character() {
 		processed = 1;
 	}
 
-	if (!processed && e[3]) { // DELETE
+	if (e[3] && processed) { // DELETE
 		if (entered_index > 0) {
 			entered_index--;
 			entered_password[entered_index] = 0;
@@ -648,13 +651,19 @@ void alert() {
 	
 	uint8_t e[16];
 	read_edges(e);
-	
+	if(isTimerExpired(4)){
+		HAL_GPIO_TogglePin(OUTPUT_Y0_GPIO_Port, OUTPUT_Y0_Pin);
+		setTimer(4, 500);
+	}
+	buzzer_SetVolume(50);
 	// Wait for user to close door
 	if (e[15]) {
 		// User closed door
+		buzzer_Stop();
 		init_door_close();
 		electronic_lock_state = DOOR_CLOSE;
 		setTimer(SYSTEM_TIMER, 100); // Poll for button[11] press
+		HAL_GPIO_WritePin(OUTPUT_Y0_GPIO_Port, OUTPUT_Y0_Pin, RESET);
 		return;
 	}
 	
@@ -788,7 +797,7 @@ void change_password_number() {
 			// Clear the last character by drawing white rectangle
 			uint16_t y_pos = (change_stage == 0) ? 50 : (change_stage == 1) ? 80 : 110;
 			lcd_fill(140 + change_password_index * 20, y_pos, 140 + change_password_index * 20 + 16, y_pos + 16, WHITE);
-			
+
 			// Clear from array
 			if (change_stage == 0) {
 				old_password_input[change_password_index] = 0;
@@ -931,7 +940,7 @@ void change_password_character() {
 			// Clear the last character
 			uint16_t y_pos = (change_stage == 0) ? 50 : (change_stage == 1) ? 80 : 110;
 			lcd_fill(140 + change_password_index * 20, y_pos, 140 + change_password_index * 20 + 16, y_pos + 16, WHITE);
-			
+
 			// Clear from array
 			if (change_stage == 0) {
 				old_password_input[change_password_index] = 0;

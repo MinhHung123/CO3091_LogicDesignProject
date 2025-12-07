@@ -31,6 +31,7 @@
 #include "lcd.h"
 #include "picture.h"
 #include "electronic_lock.h"
+#include "buzzer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -98,6 +99,7 @@ int main(void)
   MX_SPI1_Init();
   MX_FSMC_Init();
   MX_TIM4_Init();
+  MX_TIM13_Init();
   /* USER CODE BEGIN 2 */
   init_system();
 
@@ -167,6 +169,7 @@ void init_system() {
 	timer_init();
 	button_init();
 	lcd_init();
+	buzzer_init();
 	lcd_clear(WHITE);
 	led_7seg_init();
 	for (int i = 0; i < 4; ++i) {
